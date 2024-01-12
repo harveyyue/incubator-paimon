@@ -56,6 +56,7 @@ public class CdcActionCommonUtils {
     public static final String MYSQL_CONF = "mysql_conf";
     public static final String POSTGRES_CONF = "postgres_conf";
     public static final String PULSAR_CONF = "pulsar_conf";
+    public static final String PROMETHEUS_CONF = "prometheus_conf";
     public static final String TABLE_PREFIX = "table_prefix";
     public static final String TABLE_SUFFIX = "table_suffix";
     public static final String INCLUDING_TABLES = "including_tables";

@@ -42,6 +42,7 @@ under the License.
         <json-path.version>2.8.0</json-path.version>
         <mongodb.testcontainers.version>1.19.1</mongodb.testcontainers.version>
         <flink.connector.pulsar.version>4.0.0-1.17</flink.connector.pulsar.version>
+        <okhttp.version>3.14.9</okhttp.version>
     </properties>
 
     <dependencies>
@@ -155,6 +156,12 @@ under the License.
             <groupId>com.jayway.jsonpath</groupId>
             <artifactId>json-path</artifactId>
             <version>${json-path.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>${okhttp.version}</version>
         </dependency>
 
         <!-- test dependencies -->
@@ -329,11 +336,26 @@ under the License.
                             <goal>shade</goal>
                         </goals>
                         <configuration>
+                            <artifactSet>
+                                <includes>
+                                    <include>com.squareup.okhttp3:*</include>
+                                    <include>com.squareup.okio:*</include>
+                                </includes>
+                            </artifactSet>
                             <relocations>
                                 <!-- Same as flink-sql-connector-kafka. -->
                                 <relocation>
                                     <pattern>org.apache.kafka</pattern>
                                     <shadedPattern>org.apache.flink.kafka.shaded.org.apache.kafka</shadedPattern>
+                                </relocation>
+                                <!-- Shade okhttp jars -->
+                                <relocation>
+                                    <pattern>okhttp3</pattern>
+                                    <shadedPattern>org.apache.paimon.shade.okhttp3</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>okio</pattern>
+                                    <shadedPattern>org.apache.paimon.shade.okio</shadedPattern>
                                 </relocation>
                             </relocations>
                         </configuration>

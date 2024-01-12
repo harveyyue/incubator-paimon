@@ -19,6 +19,7 @@
 package org.apache.paimon.flink.action.cdc;
 
 import org.apache.paimon.flink.action.cdc.format.DataFormat;
+import org.apache.paimon.flink.action.cdc.http.source.HttpSourceOptions;
 import org.apache.paimon.flink.action.cdc.kafka.KafkaActionUtils;
 import org.apache.paimon.flink.action.cdc.mongodb.MongoDBRecordParser;
 import org.apache.paimon.flink.action.cdc.mysql.MySqlActionUtils;
@@ -175,6 +176,9 @@ public class SyncJobHandler {
                             cdcSourceConfig, MONGODB_CONF, MongoDBSourceOptions.COLLECTION);
                 }
                 break;
+            case HTTP:
+                checkRequiredOptions(cdcSourceConfig, PULSAR_CONF, HttpSourceOptions.HTTP_URLS);
+                break;
             default:
                 throw new UnsupportedOperationException("Unknown source type " + sourceType);
         }
@@ -257,7 +261,8 @@ public class SyncJobHandler {
         KAFKA("Kafka Source", "Kafka-Paimon %s Sync: %s"),
         MONGODB("MongoDB Source", "MongoDB-Paimon %s Sync: %s"),
         PULSAR("Pulsar Source", "Pulsar-Paimon %s Sync: %s"),
-        POSTGRES("Postgres Source", "Postgres-Paimon %s Sync: %s");
+        POSTGRES("Postgres Source", "Postgres-Paimon %s Sync: %s"),
+        HTTP("Http Source", "Http-Paimon %s Sync: %s");
 
         private final String sourceName;
         private final String defaultJobNameFormat;
