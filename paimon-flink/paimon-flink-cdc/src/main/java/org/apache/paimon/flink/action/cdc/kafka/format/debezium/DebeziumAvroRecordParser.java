@@ -27,6 +27,7 @@ import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.RowKind;
 import org.apache.paimon.utils.StringUtils;
 
+import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.JsonNode;
 
 import com.esri.core.geometry.ogc.OGCGeometry;
@@ -35,6 +36,7 @@ import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient;
 import io.confluent.kafka.serializers.AbstractKafkaAvroDeserializer;
 import io.confluent.kafka.serializers.GenericContainerWithVersion;
 import org.apache.avro.Schema;
+import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -282,7 +284,12 @@ public class DebeziumAvroRecordParser extends AbstractRecordParser {
     private String transformValue(
             Object originalValue, DebeziumAvroFieldDescriptor fieldDescriptor) {
         if (fieldDescriptor.isSetType()) {
-            return String.format("[%s]", originalValue);
+            try {
+                return OBJECT_MAPPER.writeValueAsString(originalValue);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(
+                        String.format("Failed to convert %s to JSON.", originalValue), e);
+            }
         } else if (fieldDescriptor.isGeoType()) {
             return convertWkbArray((GenericRecord) originalValue);
         } else if (originalValue instanceof ByteBuffer) {
@@ -292,8 +299,15 @@ public class DebeziumAvroRecordParser extends AbstractRecordParser {
                         .toPlainString();
             }
             return new String(value, StandardCharsets.UTF_8);
+        } else {
+            Object convertedObject = convertAvroObjectToJsonCompatible(originalValue);
+            try {
+                return OBJECT_MAPPER.writer().writeValueAsString(convertedObject);
+            } catch (JsonProcessingException e) {
+                throw new RuntimeException(
+                        String.format("Failed to convert %s to JSON.", originalValue), e);
+            }
         }
-        return originalValue.toString();
     }
 
     public static String convertWkbArray(GenericRecord record) {
@@ -317,6 +331,34 @@ public class DebeziumAvroRecordParser extends AbstractRecordParser {
             throw new RuntimeException(
                     String.format("Failed to convert %s to geometry JSON.", record), e);
         }
+    }
+
+    public Object convertAvroObjectToJsonCompatible(Object avroObject) {
+        if (avroObject instanceof GenericData.Record) {
+            return convertRecord((GenericData.Record) avroObject);
+        } else if (avroObject instanceof GenericData.Array) {
+            return convertArray((GenericData.Array<?>) avroObject);
+        } else {
+            // For other types, return as is or TODO: apply specific conversion if needed
+            return avroObject;
+        }
+    }
+
+    private Map<String, Object> convertRecord(GenericData.Record record) {
+        Map<String, Object> map = new HashMap<>();
+        for (Schema.Field field : record.getSchema().getFields()) {
+            Object value = record.get(field.pos());
+            map.put(field.name(), convertAvroObjectToJsonCompatible(value));
+        }
+        return map;
+    }
+
+    private List<Object> convertArray(GenericData.Array<?> array) {
+        List<Object> list = new ArrayList<>();
+        for (Object element : array) {
+            list.add(convertAvroObjectToJsonCompatible(element));
+        }
+        return list;
     }
 
     private static class Deserializer extends AbstractKafkaAvroDeserializer

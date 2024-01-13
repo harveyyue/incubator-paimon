@@ -22,12 +22,17 @@ import org.apache.paimon.flink.action.cdc.SchemaUtils;
 import org.apache.paimon.flink.action.cdc.TypeMapping;
 import org.apache.paimon.flink.action.cdc.kafka.format.FieldDescriptor;
 import org.apache.paimon.flink.action.cdc.mysql.MySqlTypeUtils;
+import org.apache.paimon.types.DataField;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DataTypes;
 
+import org.apache.avro.LogicalType;
+import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 
@@ -97,6 +102,30 @@ public class DebeziumAvroFieldDescriptor extends FieldDescriptor<Schema> {
     }
 
     private DataType toPaimonDataType(Schema schema) {
+        LogicalType logicalType = schema.getLogicalType();
+        if (logicalType != null) {
+            if (logicalType instanceof LogicalTypes.Date) {
+                return DataTypes.DATE();
+            } else if (logicalType instanceof LogicalTypes.TimestampMillis) {
+                return DataTypes.TIMESTAMP_MILLIS();
+            } else if (logicalType instanceof LogicalTypes.TimestampMicros) {
+                return DataTypes.TIMESTAMP();
+            } else if (logicalType instanceof LogicalTypes.Decimal) {
+                LogicalTypes.Decimal decimalType = (LogicalTypes.Decimal) logicalType;
+                return DataTypes.DECIMAL(decimalType.getPrecision(), decimalType.getScale());
+            } else if (logicalType instanceof LogicalTypes.TimeMillis) {
+                return DataTypes.TIME(3);
+            } else if (logicalType instanceof LogicalTypes.TimeMicros) {
+                return DataTypes.TIME(6);
+            } else if (logicalType instanceof LogicalTypes.LocalTimestampMicros) {
+                return DataTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE();
+            } else if (logicalType instanceof LogicalTypes.LocalTimestampMillis) {
+                return DataTypes.TIMESTAMP_WITH_LOCAL_TIME_ZONE(3);
+            } else {
+                throw new UnsupportedOperationException(
+                        String.format("Don't support logical avro type '%s' yet.", logicalType));
+            }
+        }
         Schema.Type avroType = schema.getType();
         switch (avroType) {
             case BOOLEAN:
@@ -112,13 +141,44 @@ public class DebeziumAvroFieldDescriptor extends FieldDescriptor<Schema> {
                 return DataTypes.INT();
             case LONG:
                 return DataTypes.BIGINT();
+            case ENUM:
             case STRING:
                 if (isSetType()) {
                     DataTypes.ARRAY(DataTypes.STRING());
                 }
                 return DataTypes.STRING();
             case RECORD:
-                return DataTypes.STRING();
+                List<DataField> fields = new ArrayList<>();
+                for (Schema.Field field : schema.getFields()) {
+                    DataType fieldType = toPaimonDataType(field.schema());
+                    fields.add(DataTypes.FIELD(field.pos(), field.name(), fieldType, field.doc()));
+                }
+                return DataTypes.ROW(fields.toArray(new DataField[0]));
+            case ARRAY:
+                Schema elementSchema = schema.getElementType();
+                DataType elementType = toPaimonDataType(elementSchema);
+                return DataTypes.ARRAY(elementType);
+            case MAP:
+                DataType valueType = toPaimonDataType(schema.getValueType());
+                return DataTypes.MAP(DataTypes.STRING(), valueType);
+            case UNION:
+                List<Schema> unionTypes = schema.getTypes();
+                // Check if it's a nullable type union
+                if (unionTypes.size() == 2
+                        && unionTypes.contains(Schema.create(Schema.Type.NULL))) {
+                    Schema actualSchema =
+                            unionTypes.stream()
+                                    .filter(s -> s.getType() != Schema.Type.NULL)
+                                    .findFirst()
+                                    .orElseThrow(
+                                            () ->
+                                                    new IllegalStateException(
+                                                            "Union type does not contain a non-null type"));
+                    return toPaimonDataType(actualSchema)
+                            .copy(true); // Return nullable version of the non-null type
+                }
+                // Handle generic unions or throw an exception
+                throw new UnsupportedOperationException("Generic unions are not supported");
             default:
                 throw new UnsupportedOperationException(
                         String.format("Don't support avro type '%s' yet.", avroType));
