@@ -32,7 +32,10 @@ import javax.annotation.Nullable;
 import java.io.Serializable;
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.List;
@@ -125,6 +128,12 @@ public interface Expression extends Serializable {
                             referencedField.field(),
                             referencedField.fieldType(),
                             referencedField.literals());
+                }),
+        FROM_UNIXTIME(
+                (typeMapping, caseSensitive, args) -> {
+                    ReferencedField referencedField =
+                            ReferencedField.checkArgument(typeMapping, caseSensitive, args);
+                    return fromUnixtime(referencedField.field(), referencedField.literals());
                 }),
         SUBSTRING(
                 (typeMapping, caseSensitive, args) -> {
@@ -228,6 +237,16 @@ public interface Expression extends Serializable {
                             String.join(",", ExpressionFunction.EXPRESSION_FUNCTIONS.keySet())));
         }
         return function.create(typeMapping, caseSensitive, args);
+    }
+
+    static Expression fromUnixtime(String fieldReference, String... literals) {
+        checkArgument(
+                literals.length <= 1,
+                String.format(
+                        "'from_unixtime' expression supports one argument or none, but found '%s'.",
+                        literals.length));
+
+        return new FromUnixtime(fieldReference, literals.length == 0 ? null : literals[0]);
     }
 
     static Expression substring(String fieldReference, String... literals) {
@@ -446,6 +465,67 @@ public interface Expression extends Serializable {
                     fieldType,
                     literals[0],
                     literals.length == 1 ? null : Integer.valueOf(literals[1]));
+        }
+    }
+
+    /** date format from the number of milliseconds unix epoch input. */
+    class FromUnixtime implements Expression {
+
+        private static final long serialVersionUID = 1L;
+
+        private final String fieldReference;
+        private final ZoneId zoneId;
+
+        private FromUnixtime(String fieldReference, String stringifyServerTimeZone) {
+            this.fieldReference = fieldReference;
+            this.zoneId =
+                    stringifyServerTimeZone == null
+                            ? ZoneOffset.systemDefault()
+                            : ZoneId.of(stringifyServerTimeZone);
+        }
+
+        @Override
+        public String fieldReference() {
+            return fieldReference;
+        }
+
+        @Override
+        public DataType outputType() {
+            return DataTypes.STRING();
+        }
+
+        @Override
+        public String eval(String input) {
+            try {
+                int len = input.length();
+                long newValue = Long.parseLong(input);
+                LocalDateTime localDateTime;
+                int precision = 0;
+                if (len == 10) {
+                    localDateTime =
+                            Instant.ofEpochSecond(newValue, 0).atZone(zoneId).toLocalDateTime();
+                } else if (len == 13) {
+                    localDateTime = DateTimeUtils.toLocalDateTime(newValue, zoneId);
+                    precision = 3;
+                } else if (len == 16) {
+                    long microsecondsPerSecond = 1_000_000;
+                    long nanosecondsPerMicros = 1_000;
+                    long seconds = newValue / microsecondsPerSecond;
+                    long nanoAdjustment = (newValue % microsecondsPerSecond) * nanosecondsPerMicros;
+
+                    localDateTime =
+                            Instant.ofEpochSecond(seconds, nanoAdjustment)
+                                    .atZone(zoneId)
+                                    .toLocalDateTime();
+                    precision = 6;
+                } else {
+                    localDateTime = DateTimeUtils.toLocalDateTime(newValue, zoneId);
+                }
+                return DateTimeUtils.formatLocalDateTime(localDateTime, precision);
+            } catch (NumberFormatException e) {
+                throw new IllegalArgumentException(
+                        "Invalid value for from_unixtime function: " + input + ".", e);
+            }
         }
     }
 
