@@ -24,6 +24,11 @@ import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DataTypeChecks;
 
 import java.time.DateTimeException;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.List;
 import java.util.TimeZone;
@@ -31,6 +36,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.apache.paimon.data.BinaryString.fromString;
+import static org.apache.paimon.data.Timestamp.fromLocalDateTime;
 import static org.apache.paimon.types.DataTypeRoot.BINARY;
 import static org.apache.paimon.types.DataTypeRoot.CHAR;
 
@@ -275,27 +281,74 @@ public class BinaryStringUtils {
     }
 
     public static int toDate(BinaryString input) throws DateTimeException {
-        Integer date = DateTimeUtils.parseDate(input.toString());
-        if (date == null) {
-            throw new DateTimeException("For input string: '" + input + "'.");
-        }
+        String dateString = input.toString();
+        if (dateString.matches("\\d+")) {
+            // It's a numeric string representing epoch milliseconds.
+            long millis = Long.parseLong(dateString);
+            LocalDate date = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate();
 
-        return date;
+            // Convert LocalDate to your desired representation (e.g., days since the epoch)
+            // This is an example to convert LocalDate to an integer representation.
+            return Math.toIntExact(date.toEpochDay());
+        } else {
+            // Parse as formatted date string
+            Integer date = DateTimeUtils.parseDate(dateString);
+            if (date == null) {
+                throw new DateTimeException("For input string: '" + input + "'.");
+            }
+            return date;
+        }
     }
 
     public static int toTime(BinaryString input) throws DateTimeException {
-        Integer date = DateTimeUtils.parseTime(input.toString());
-        if (date == null) {
-            throw new DateTimeException("For input string: '" + input + "'.");
+        String timeString = input.toString();
+        if (timeString.matches("\\d+")) {
+            // It's a numeric string representing epoch milliseconds.
+            long millis = Long.parseLong(timeString);
+            LocalTime time = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalTime();
+            // Convert LocalTime to your desired representation (e.g., nanos of the day)
+            // This is an example to convert LocalTime to an integer representation.
+            return time.toSecondOfDay() * 1000; // Number of milliseconds since midnight
+        } else {
+            // Parse as formatted time string
+            Integer time = DateTimeUtils.parseTime(timeString);
+            if (time == null) {
+                throw new DateTimeException("For input string: '" + input + "'.");
+            }
+            return time;
         }
-
-        return date;
     }
 
     /** Used by {@code CAST(x as TIMESTAMP)}. */
     public static Timestamp toTimestamp(BinaryString input, int precision)
             throws DateTimeException {
-        return DateTimeUtils.parseTimestampData(input.toString(), precision);
+        String str = input.toString();
+        // Check if the input string is numeric.
+        if (str.matches("\\d+")) {
+            long millis = Long.parseLong(str);
+            return fromMillisToTimestamp(millis, precision);
+        } else {
+            return DateTimeUtils.parseTimestampData(input.toString(), precision);
+        }
+    }
+
+    // Helper method to convert milliseconds to Timestamp with the provided precision.
+    private static Timestamp fromMillisToTimestamp(long millis, int precision) {
+        // Calculate seconds and nanoseconds from the millis
+        long seconds = millis / 1000;
+        int nanos = (int) ((millis % 1000) * 1_000_000);
+
+        // Adjust the nanoseconds to the specified precision
+        if (precision < 9) {
+            nanos =
+                    (int)
+                            (Math.floor(nanos / Math.pow(10, 9 - precision))
+                                    * Math.pow(10, 9 - precision));
+        }
+
+        // Create a LocalDateTime from the seconds and nanoseconds
+        LocalDateTime dateTime = LocalDateTime.ofEpochSecond(seconds, nanos, ZoneOffset.UTC);
+        return fromLocalDateTime(dateTime);
     }
 
     /** Used by {@code CAST(x as TIMESTAMP_LTZ)}. */
