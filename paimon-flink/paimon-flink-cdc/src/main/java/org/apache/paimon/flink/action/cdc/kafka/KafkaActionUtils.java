@@ -18,11 +18,17 @@
 
 package org.apache.paimon.flink.action.cdc.kafka;
 
+import org.apache.paimon.flink.action.cdc.CdcDeserializationSchema;
+import org.apache.paimon.flink.action.cdc.CdcSourceRecord;
 import org.apache.paimon.flink.action.cdc.MessageQueueSchemaUtils;
 import org.apache.paimon.flink.action.cdc.format.DataFormat;
 import org.apache.paimon.utils.StringUtils;
 
-import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
+import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.DeserializationFeature;
+import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.JsonNode;
+import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
+
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.KafkaSourceBuilder;
@@ -34,7 +40,6 @@ import org.apache.flink.table.api.TableException;
 import org.apache.flink.table.api.ValidationException;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.consumer.OffsetResetStrategy;
@@ -69,8 +74,8 @@ public class KafkaActionUtils {
     private static final String PARTITION = "partition";
     private static final String OFFSET = "offset";
 
-    public static KafkaSource<String> buildKafkaSource(Configuration kafkaConfig) {
-        KafkaSourceBuilder<String> kafkaSourceBuilder = KafkaSource.builder();
+    public static KafkaSource<CdcSourceRecord> buildKafkaSource(Configuration kafkaConfig) {
+        KafkaSourceBuilder<CdcSourceRecord> kafkaSourceBuilder = KafkaSource.builder();
 
         if (kafkaConfig.contains(KafkaConnectorOptions.TOPIC)) {
             List<String> topics =
@@ -83,11 +88,9 @@ public class KafkaActionUtils {
                     Pattern.compile(kafkaConfig.get(KafkaConnectorOptions.TOPIC_PATTERN)));
         }
 
-        KafkaValueOnlyDeserializationSchemaWrapper<String> schema =
-                new KafkaValueOnlyDeserializationSchemaWrapper<>(new SimpleStringSchema());
-        kafkaSourceBuilder.setDeserializer(schema);
-
-        kafkaSourceBuilder.setGroupId(kafkaPropertiesGroupId(kafkaConfig));
+        kafkaSourceBuilder
+                .setValueOnlyDeserializer(new CdcDeserializationSchema())
+                .setGroupId(kafkaPropertiesGroupId(kafkaConfig));
 
         Properties properties = createKafkaProperties(kafkaConfig);
 
@@ -312,18 +315,31 @@ public class KafkaActionUtils {
 
         private final KafkaConsumer<String, String> consumer;
         private final String topic;
+        private final ObjectMapper objectMapper = new ObjectMapper();
 
         KafkaConsumerWrapper(KafkaConsumer<String, String> kafkaConsumer, String topic) {
             this.consumer = kafkaConsumer;
             this.topic = topic;
+            objectMapper
+                    .configure(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS, true)
+                    .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         }
 
         @Override
-        public List<String> getRecords(int pollTimeOutMills) {
+        public List<CdcSourceRecord> getRecords(int pollTimeOutMills) {
             ConsumerRecords<String, String> consumerRecords =
                     consumer.poll(Duration.ofMillis(pollTimeOutMills));
             return StreamSupport.stream(consumerRecords.records(topic).spliterator(), false)
-                    .map(ConsumerRecord::value)
+                    .map(
+                            consumerRecord -> {
+                                try {
+                                    return new CdcSourceRecord(
+                                            objectMapper.readValue(
+                                                    consumerRecord.value(), JsonNode.class));
+                                } catch (JsonProcessingException e) {
+                                    throw new RuntimeException(e);
+                                }
+                            })
                     .collect(Collectors.toList());
         }
 
