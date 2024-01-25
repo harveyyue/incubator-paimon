@@ -21,6 +21,7 @@ package org.apache.paimon.flink.action.cdc.format.debezium;
 import org.apache.paimon.flink.action.cdc.CdcSourceRecord;
 import org.apache.paimon.flink.action.cdc.ComputedColumn;
 import org.apache.paimon.flink.action.cdc.TypeMapping;
+import org.apache.paimon.flink.action.cdc.format.DataFormat;
 import org.apache.paimon.flink.action.cdc.format.RecordParser;
 import org.apache.paimon.flink.sink.cdc.RichCdcMultiplexRecord;
 import org.apache.paimon.types.DataType;
@@ -32,6 +33,9 @@ import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.core.type.TypeRefe
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.JsonNode;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.node.ArrayNode;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import javax.annotation.Nullable;
 
 import java.time.ZoneOffset;
@@ -41,7 +45,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
+import java.util.regex.Pattern;
 
 import static org.apache.paimon.utils.JsonSerdeUtil.getNodeAs;
 import static org.apache.paimon.utils.JsonSerdeUtil.isNull;
@@ -65,18 +69,35 @@ import static org.apache.paimon.utils.JsonSerdeUtil.isNull;
  */
 public class DebeziumRecordParser extends RecordParser {
 
+    private static final Logger LOG = LoggerFactory.getLogger(DebeziumRecordParser.class);
+
+    protected static final Pattern DEFAULT_DOT_PATTERN = Pattern.compile(".");
     private static final String FIELD_SCHEMA = "schema";
     protected static final String FIELD_PAYLOAD = "payload";
-    private static final String FIELD_BEFORE = "before";
-    private static final String FIELD_AFTER = "after";
-    private static final String FIELD_SOURCE = "source";
+    protected static final String FIELD_BEFORE = "before";
+    protected static final String FIELD_AFTER = "after";
+    protected static final String FIELD_SOURCE = "source";
     private static final String FIELD_PRIMARY = "pkNames";
-    private static final String FIELD_DB = "db";
-    private static final String FIELD_TYPE = "op";
-    private static final String OP_INSERT = "c";
-    private static final String OP_UPDATE = "u";
-    private static final String OP_DELETE = "d";
-    private static final String OP_READE = "r";
+    protected static final String FIELD_DB = "db";
+    protected static final String FIELD_TYPE = "op";
+    protected static final String OP_INSERT = "c";
+    protected static final String OP_UPDATE = "u";
+    protected static final String OP_DELETE = "d";
+    protected static final String OP_READE = "r";
+    // debezium truncate event
+    protected static final String OP_TRUNCATE = "t";
+    // debezium message event
+    protected static final String OP_MESSAGE = "m";
+    // debezium connect property
+    public static final String CONNECT_PARAMETERS = "connect.parameters";
+    public static final String CONNECT_NAME = "connect.name";
+    public static final String CONNECT_TYPE = "connect.type";
+    public static final String CONNECT_DECIMAL_PRECISION = "connect.decimal.precision";
+    public static final String CONNECT_SCALE = "scale";
+    public static final String CONNECT_LENGTH = "length";
+    public static final String DEBEZIUM_SOURCE_COLUMN_TYPE = "__debezium.source.column.type";
+    public static final String DEBEZIUM_SOURCE_COLUMN_LENGTH = "__debezium.source.column.length";
+    public static final String DEBEZIUM_SOURCE_COLUMN_SCALE = "__debezium.source.column.scale";
 
     private boolean hasSchema;
     private final Map<String, String> debeziumTypes = new HashMap<>();
@@ -104,6 +125,10 @@ public class DebeziumRecordParser extends RecordParser {
                 break;
             case OP_DELETE:
                 processRecord(getBefore(operation), RowKind.DELETE, records);
+                break;
+            case OP_TRUNCATE:
+            case OP_MESSAGE:
+                LOG.warn("Skip record operation: {}", operation);
                 break;
             default:
                 throw new UnsupportedOperationException("Unknown record operation: " + operation);
@@ -194,17 +219,17 @@ public class DebeziumRecordParser extends RecordParser {
         LinkedHashMap<String, String> resultMap = new LinkedHashMap<>();
         for (Map.Entry<String, Object> entry : recordMap.entrySet()) {
             String fieldName = entry.getKey();
-            String rawValue = Objects.toString(entry.getValue(), null);
+            Object rawValue = entry.getValue();
             String debeziumType = debeziumTypes.get(fieldName);
             String className = classNames.get(fieldName);
 
             String transformed =
                     DebeziumSchemaUtils.transformRawValue(
+                            DataFormat.DEBEZIUM_JSON,
                             rawValue,
                             debeziumType,
                             className,
                             typeMapping,
-                            record.get(fieldName),
                             ZoneOffset.UTC,
                             parameters.get(fieldName));
             resultMap.put(fieldName, transformed);

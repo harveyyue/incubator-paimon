@@ -27,6 +27,7 @@ import org.apache.paimon.schema.Schema;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DataTypes;
 import org.apache.paimon.types.RowKind;
+import org.apache.paimon.utils.JsonSerdeUtil;
 import org.apache.paimon.utils.TypeUtils;
 
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
@@ -57,7 +58,6 @@ import static org.apache.paimon.flink.action.cdc.CdcActionCommonUtils.mapKeyCase
 import static org.apache.paimon.flink.action.cdc.CdcActionCommonUtils.recordKeyDuplicateErrMsg;
 import static org.apache.paimon.utils.JsonSerdeUtil.convertValue;
 import static org.apache.paimon.utils.JsonSerdeUtil.getNodeAs;
-import static org.apache.paimon.utils.JsonSerdeUtil.isNull;
 import static org.apache.paimon.utils.JsonSerdeUtil.writeValueAsString;
 
 /**
@@ -168,7 +168,7 @@ public abstract class RecordParser
                 });
     }
 
-    private List<String> extractPrimaryKeys() {
+    protected List<String> extractPrimaryKeys() {
         ArrayNode pkNames = getNodeAs(root, primaryField(), ArrayNode.class);
         if (pkNames == null) {
             return Collections.emptyList();
@@ -187,7 +187,7 @@ public abstract class RecordParser
     }
 
     /** Handle case sensitivity here. */
-    private RichCdcMultiplexRecord createRecord(
+    protected RichCdcMultiplexRecord createRecord(
             RowKind rowKind,
             Map<String, String> data,
             LinkedHashMap<String, DataType> paimonFieldTypes) {
@@ -235,7 +235,7 @@ public abstract class RecordParser
         return isNull(node) ? null : node.asText();
     }
 
-    protected void checkNotNull(JsonNode node, String key) {
+    protected void checkNotNull(Object node, String key) {
         if (isNull(node)) {
             throw new RuntimeException(
                     String.format("Invalid %s format: missing '%s' field.", format(), key));
@@ -243,13 +243,17 @@ public abstract class RecordParser
     }
 
     protected void checkNotNull(
-            JsonNode node, String key, String conditionKey, String conditionValue) {
+            Object node, String key, String conditionKey, String conditionValue) {
         if (isNull(node)) {
             throw new RuntimeException(
                     String.format(
                             "Invalid %s format: missing '%s' field when '%s' is '%s'.",
                             format(), key, conditionKey, conditionValue));
         }
+    }
+
+    private boolean isNull(Object obj) {
+        return (obj instanceof JsonNode && JsonSerdeUtil.isNull((JsonNode) obj)) || obj == null;
     }
 
     protected JsonNode getAndCheck(String key) {

@@ -150,6 +150,11 @@ public class SyncJobHandler {
                         KAFKA_CONF,
                         KafkaConnectorOptions.TOPIC,
                         KafkaConnectorOptions.TOPIC_PATTERN);
+                DataFormat dataFormat = KafkaActionUtils.getDataFormat(cdcSourceConfig);
+                if (dataFormat.equals(DataFormat.DEBEZIUM_AVRO)) {
+                    checkRequiredOptions(
+                            cdcSourceConfig, KAFKA_CONF, KafkaActionUtils.SCHEMA_REGISTRY_URL);
+                }
                 break;
             case PULSAR:
                 checkRequiredOptions(
