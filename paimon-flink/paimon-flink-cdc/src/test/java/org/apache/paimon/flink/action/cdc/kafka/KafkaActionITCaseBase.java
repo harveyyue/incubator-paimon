@@ -24,6 +24,10 @@ import org.apache.paimon.utils.StringUtils;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.JsonNode;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
+import io.confluent.kafka.serializers.KafkaAvroSerializer;
+import org.apache.avro.Schema;
+import org.apache.avro.generic.GenericData;
+import org.apache.avro.generic.GenericRecord;
 import org.apache.flink.util.DockerImageVersions;
 import org.apache.kafka.clients.CommonClientConfigs;
 import org.apache.kafka.clients.admin.AdminClient;
@@ -35,15 +39,18 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.extension.AfterAllCallback;
 import org.junit.jupiter.api.extension.BeforeAllCallback;
 import org.junit.jupiter.api.extension.ExtensionContext;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.KafkaContainer;
 import org.testcontainers.containers.Network;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
@@ -63,25 +70,34 @@ import java.util.Properties;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ExecutionException;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
+import static io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig.AUTO_REGISTER_SCHEMAS;
+import static io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Base test class for Kafka synchronization. */
 public abstract class KafkaActionITCaseBase extends CdcActionITCaseBase {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    protected final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final Logger LOG = LoggerFactory.getLogger(KafkaActionITCaseBase.class);
 
     private static final String INTER_CONTAINER_KAFKA_ALIAS = "kafka";
+    private static final String INTER_CONTAINER_SCHEMA_REGISTRY_ALIAS = "schemaregistry";
     private static final Network NETWORK = Network.newNetwork();
     private static final int zkTimeoutMills = 30000;
 
     // Timer for scheduling logging task if the test hangs
     private final Timer loggingTimer = new Timer("Debug Logging Timer");
 
+    // Serializer for debezium avro format
+    protected KafkaAvroSerializer kafkaKeyAvroSerializer;
+    protected KafkaAvroSerializer kafkaValueAvroSerializer;
+
     @RegisterExtension
+    @Order(1)
     public static final KafkaContainerExtension KAFKA_CONTAINER =
             (KafkaContainerExtension)
                     new KafkaContainerExtension(DockerImageName.parse(DockerImageVersions.KAFKA)) {
@@ -102,6 +118,21 @@ public abstract class KafkaActionITCaseBase extends CdcActionITCaseBase {
                             // test run
                             .withEnv("KAFKA_LOG_RETENTION_MS", "-1");
 
+    @RegisterExtension
+    @Order(2)
+    public static final SchemaRegistryContainerExtension SCHEMA_REGISTRY_CONTAINER =
+            new SchemaRegistryContainerExtension(
+                            DockerImageName.parse(DockerImageVersions.SCHEMA_REGISTRY))
+                    .dependsOn(KAFKA_CONTAINER)
+                    .withNetwork(NETWORK)
+                    .withEnv("SCHEMA_REGISTRY_HOST_NAME", "schema_registry")
+                    .withEnv(
+                            "SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS",
+                            "PLAINTEXT://" + KAFKA_CONTAINER.getNetworkAliases().get(0) + ":9092")
+                    .withNetworkAliases(INTER_CONTAINER_SCHEMA_REGISTRY_ALIAS)
+                    .withLogConsumer(new Slf4jLogConsumer(LOG))
+                    .withStartupTimeout(Duration.ofSeconds(60));
+
     @BeforeEach
     public void setup() {
         // Probe Kafka broker status per 30 seconds
@@ -116,6 +147,15 @@ public abstract class KafkaActionITCaseBase extends CdcActionITCaseBase {
                     // Log status of topics
                     logTopicPartitionStatus(topicDescriptions);
                 });
+
+        // Init avro serializer for kafka key/value
+        Map<String, Object> props = new HashMap<>();
+        props.put(SCHEMA_REGISTRY_URL_CONFIG, getSchemaRegistryUrl());
+        props.put(AUTO_REGISTER_SCHEMAS, true);
+        kafkaKeyAvroSerializer = new KafkaAvroSerializer();
+        kafkaKeyAvroSerializer.configure(props, true);
+        kafkaValueAvroSerializer = new KafkaAvroSerializer();
+        kafkaValueAvroSerializer.configure(props, false);
     }
 
     @AfterEach
@@ -299,6 +339,56 @@ public abstract class KafkaActionITCaseBase extends CdcActionITCaseBase {
         kafkaProducer.close();
     }
 
+    void writeByteRecordsToKafka(
+            String topic,
+            List<String> lines,
+            BiFunction<String, String, ProducerRecord<byte[], byte[]>> convertFunction)
+            throws Exception {
+        Properties producerProperties = getStandardProps();
+        producerProperties.setProperty("retries", "0");
+        producerProperties.put("key.serializer", ByteArraySerializer.class.getName());
+        producerProperties.put("value.serializer", ByteArraySerializer.class.getName());
+
+        try (KafkaProducer<byte[], byte[]> kafkaProducer =
+                new KafkaProducer<>(producerProperties)) {
+            lines = filterOutLicenseLine(lines);
+            for (String line : lines) {
+                ProducerRecord<byte[], byte[]> producerRecord = convertFunction.apply(topic, line);
+                // Write to kafka
+                kafkaProducer.send(producerRecord);
+            }
+        }
+    }
+
+    public String getSchemaRegistryUrl() {
+        return SCHEMA_REGISTRY_CONTAINER.getSchemaRegistryUrl();
+    }
+
+    protected GenericRecord buildDebeziumSourceRecord(Schema sourceSchema, JsonNode sourceValue) {
+        GenericRecord source = new GenericData.Record(sourceSchema);
+        source.put("version", sourceValue.get("version").asText());
+        source.put("connector", sourceValue.get("connector").asText());
+        source.put("name", sourceValue.get("name").asText());
+        source.put("ts_ms", sourceValue.get("ts_ms").asLong());
+        source.put("snapshot", sourceValue.get("snapshot").asText());
+        source.put("db", sourceValue.get("db").asText());
+        source.put(
+                "sequence",
+                sourceValue.get("sequence") == null ? null : sourceValue.get("sequence").asText());
+        source.put("table", sourceValue.get("table").asText());
+        source.put("server_id", sourceValue.get("server_id").asLong());
+        source.put(
+                "gtid", sourceValue.get("gtid") == null ? null : sourceValue.get("gtid").asText());
+        source.put("file", sourceValue.get("file").asText());
+        source.put("pos", sourceValue.get("pos").asLong());
+        source.put("row", sourceValue.get("row").asInt());
+        source.put("thread", sourceValue.get("thread").asLong());
+        source.put(
+                "query",
+                sourceValue.get("query") == null ? null : sourceValue.get("query").asText());
+        return source;
+    }
+
     /** Kafka container extension for junit5. */
     private static class KafkaContainerExtension extends KafkaContainer
             implements BeforeAllCallback, AfterAllCallback {
@@ -314,6 +404,34 @@ public abstract class KafkaActionITCaseBase extends CdcActionITCaseBase {
         @Override
         public void afterAll(ExtensionContext extensionContext) {
             this.close();
+        }
+    }
+
+    /** Schema registry container extension for junit5. */
+    private static class SchemaRegistryContainerExtension
+            extends GenericContainer<SchemaRegistryContainerExtension>
+            implements BeforeAllCallback, AfterAllCallback {
+
+        private static final Integer SCHEMA_REGISTRY_EXPOSED_PORT = 8081;
+
+        private SchemaRegistryContainerExtension(DockerImageName dockerImageName) {
+            super(dockerImageName);
+            addExposedPorts(SCHEMA_REGISTRY_EXPOSED_PORT);
+        }
+
+        @Override
+        public void beforeAll(ExtensionContext extensionContext) {
+            this.doStart();
+        }
+
+        @Override
+        public void afterAll(ExtensionContext extensionContext) {
+            this.close();
+        }
+
+        public String getSchemaRegistryUrl() {
+            return String.format(
+                    "http://%s:%s", getHost(), getMappedPort(SCHEMA_REGISTRY_EXPOSED_PORT));
         }
     }
 }

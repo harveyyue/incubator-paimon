@@ -18,17 +18,20 @@
 
 package org.apache.paimon.flink.action.cdc.kafka;
 
+import org.apache.paimon.flink.action.cdc.CdcDebeziumAvroDeserializationSchema;
+import org.apache.paimon.flink.action.cdc.CdcDebeziumAvroDeserializationSchema.Deserializer;
 import org.apache.paimon.flink.action.cdc.CdcDeserializationSchema;
 import org.apache.paimon.flink.action.cdc.CdcSourceRecord;
 import org.apache.paimon.flink.action.cdc.MessageQueueSchemaUtils;
 import org.apache.paimon.flink.action.cdc.format.DataFormat;
 import org.apache.paimon.utils.StringUtils;
 
-import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.DeserializationFeature;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.JsonNode;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
+import org.apache.flink.configuration.ConfigOption;
+import org.apache.flink.configuration.ConfigOptions;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.KafkaSourceBuilder;
@@ -45,8 +48,9 @@ import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.clients.consumer.OffsetResetStrategy;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
-import org.apache.kafka.common.serialization.StringDeserializer;
+import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collection;
@@ -69,6 +73,13 @@ import static org.apache.paimon.options.OptionsUtils.convertToPropertiesPrefixKe
 /** Utils for Kafka Action. */
 public class KafkaActionUtils {
 
+    public static final ConfigOption<String> SCHEMA_REGISTRY_URL =
+            ConfigOptions.key("schema.registry.url")
+                    .stringType()
+                    .noDefaultValue()
+                    .withDescription(
+                            "The URL of the Confluent Schema Registry to fetch/register schemas.");
+
     public static final String PROPERTIES_PREFIX = "properties.";
 
     private static final String PARTITION = "partition";
@@ -88,9 +99,15 @@ public class KafkaActionUtils {
                     Pattern.compile(kafkaConfig.get(KafkaConnectorOptions.TOPIC_PATTERN)));
         }
 
-        kafkaSourceBuilder
-                .setValueOnlyDeserializer(new CdcDeserializationSchema())
-                .setGroupId(kafkaPropertiesGroupId(kafkaConfig));
+        if (getDataFormat(kafkaConfig).equals(DataFormat.DEBEZIUM_AVRO)) {
+            String schemaRegistryUrl = kafkaConfig.get(SCHEMA_REGISTRY_URL);
+            kafkaSourceBuilder.setDeserializer(
+                    new CdcDebeziumAvroDeserializationSchema(schemaRegistryUrl));
+        } else {
+            kafkaSourceBuilder.setValueOnlyDeserializer(new CdcDeserializationSchema());
+        }
+
+        kafkaSourceBuilder.setGroupId(kafkaPropertiesGroupId(kafkaConfig));
         Properties properties = createKafkaProperties(kafkaConfig);
 
         StartupMode startupMode =
@@ -254,13 +271,16 @@ public class KafkaActionUtils {
                 ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG,
                 kafkaConfig.get(KafkaConnectorOptions.PROPS_BOOTSTRAP_SERVERS));
         props.put(ConsumerConfig.GROUP_ID_CONFIG, kafkaPropertiesGroupId(kafkaConfig));
-        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
         props.put(
-                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class.getName());
+                ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG,
+                ByteArrayDeserializer.class.getName());
+        props.put(
+                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG,
+                ByteArrayDeserializer.class.getName());
         props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
         props.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, "false");
 
-        KafkaConsumer<String, String> consumer = new KafkaConsumer<>(props);
+        KafkaConsumer<byte[], byte[]> consumer = new KafkaConsumer<>(props);
 
         String topic;
         if (kafkaConfig.contains(KafkaConnectorOptions.TOPIC)) {
@@ -285,7 +305,7 @@ public class KafkaActionUtils {
         consumer.assign(topicPartitions);
         consumer.seekToBeginning(topicPartitions);
 
-        return new KafkaConsumerWrapper(consumer, topic);
+        return new KafkaConsumerWrapper(consumer, topic, kafkaConfig);
     }
 
     private static Properties createKafkaProperties(Configuration kafkaConfig) {
@@ -312,30 +332,52 @@ public class KafkaActionUtils {
 
     private static class KafkaConsumerWrapper implements MessageQueueSchemaUtils.ConsumerWrapper {
 
-        private final KafkaConsumer<String, String> consumer;
+        private final KafkaConsumer<byte[], byte[]> consumer;
         private final String topic;
+        private final Configuration kafkaConfig;
         private final ObjectMapper objectMapper = new ObjectMapper();
+        private Deserializer deserializer;
 
-        KafkaConsumerWrapper(KafkaConsumer<String, String> kafkaConsumer, String topic) {
+        KafkaConsumerWrapper(
+                KafkaConsumer<byte[], byte[]> kafkaConsumer,
+                String topic,
+                Configuration kafkaConfig) {
             this.consumer = kafkaConsumer;
             this.topic = topic;
-            objectMapper
+            this.kafkaConfig = kafkaConfig;
+            this.objectMapper
                     .configure(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS, true)
                     .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
         }
 
         @Override
         public List<CdcSourceRecord> getRecords(int pollTimeOutMills) {
-            ConsumerRecords<String, String> consumerRecords =
+            ConsumerRecords<byte[], byte[]> consumerRecords =
                     consumer.poll(Duration.ofMillis(pollTimeOutMills));
+
+            DataFormat dataFormat = getDataFormat(kafkaConfig);
             return StreamSupport.stream(consumerRecords.records(topic).spliterator(), false)
                     .map(
                             consumerRecord -> {
                                 try {
+                                    if (dataFormat.equals(DataFormat.DEBEZIUM_AVRO)) {
+                                        if (deserializer == null) {
+                                            String schemaRegistryUrl =
+                                                    kafkaConfig.get(SCHEMA_REGISTRY_URL);
+                                            deserializer = new Deserializer(schemaRegistryUrl);
+                                        }
+                                        String topic = consumerRecord.topic();
+                                        return new CdcSourceRecord(
+                                                topic,
+                                                deserializer.deserialize(
+                                                        topic, true, consumerRecord.key()),
+                                                deserializer.deserialize(
+                                                        topic, false, consumerRecord.value()));
+                                    }
                                     return new CdcSourceRecord(
                                             objectMapper.readValue(
                                                     consumerRecord.value(), JsonNode.class));
-                                } catch (JsonProcessingException e) {
+                                } catch (IOException e) {
                                     throw new RuntimeException(e);
                                 }
                             })

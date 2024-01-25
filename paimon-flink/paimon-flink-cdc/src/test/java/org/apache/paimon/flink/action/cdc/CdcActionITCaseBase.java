@@ -34,6 +34,7 @@ import org.apache.paimon.table.source.ReadBuilder;
 import org.apache.paimon.table.source.TableScan;
 import org.apache.paimon.types.DataField;
 import org.apache.paimon.types.RowType;
+import org.apache.paimon.utils.StringUtils;
 
 import org.apache.flink.api.common.JobStatus;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
@@ -53,6 +54,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -124,6 +126,13 @@ public class CdcActionITCaseBase extends ActionITCaseBase {
                     boolean sameType = field.type().equals(rowType.getFieldTypes().get(i));
                     if (sameName && sameType) {
                         cnt++;
+                    } else {
+                        LOG.warn(
+                                "Expected column's property is {}:{}, but actual is {}:{}",
+                                rowType.getFieldNames().get(i),
+                                rowType.getFieldTypes().get(i),
+                                field.name(),
+                                field.type());
                     }
                 }
                 if (cnt == rowType.getFieldCount()) {
@@ -209,6 +218,16 @@ public class CdcActionITCaseBase extends ActionITCaseBase {
             }
             Thread.sleep(1000);
         }
+    }
+
+    protected List<String> filterOutLicenseLine(List<String> lines) {
+        return lines.stream()
+                .filter(
+                        line ->
+                                !StringUtils.isBlank(line)
+                                        && !line.startsWith("/*")
+                                        && !line.startsWith(" *"))
+                .collect(Collectors.toList());
     }
 
     private <T> String getActionName(Class<T> clazz) {
