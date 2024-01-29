@@ -204,7 +204,8 @@ public class DebeziumRecordParser extends RecordParser {
                             className,
                             typeMapping,
                             record.get(fieldName),
-                            ZoneOffset.UTC);
+                            ZoneOffset.UTC,
+                            parameters.get(fieldName));
             resultMap.put(fieldName, transformed);
 
             paimonFieldTypes.put(
