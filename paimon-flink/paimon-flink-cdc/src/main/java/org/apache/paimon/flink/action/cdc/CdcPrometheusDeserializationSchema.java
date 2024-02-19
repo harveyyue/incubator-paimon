@@ -16,12 +16,12 @@
  * limitations under the License.
  */
 
-package org.apache.paimon.flink.action.cdc.http.source.reader.deserializer;
+package org.apache.paimon.flink.action.cdc;
 
 import org.apache.paimon.flink.action.cdc.http.source.reader.HttpRecord;
+import org.apache.paimon.flink.action.cdc.http.source.reader.deserializer.HttpRecordDeserializationSchema;
+import org.apache.paimon.flink.action.cdc.http.source.reader.deserializer.PrometheusHttpRecord;
 import org.apache.paimon.flink.action.cdc.http.source.util.HttpUtils;
-
-import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.util.Collector;
@@ -29,22 +29,22 @@ import org.apache.flink.util.Collector;
 import java.io.IOException;
 import java.util.List;
 
-/** The String type implementation for {@link HttpRecordDeserializationSchema}. */
-public class PrometheusStringDeserializationSchema
-        implements HttpRecordDeserializationSchema<String> {
+import static org.apache.flink.api.java.typeutils.TypeExtractor.getForClass;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+/** The {@link CdcSourceRecord} type implementation for {@link HttpRecordDeserializationSchema}. */
+public class CdcPrometheusDeserializationSchema
+        implements HttpRecordDeserializationSchema<CdcSourceRecord> {
 
     @Override
-    public void deserialize(HttpRecord record, Collector<String> out) throws IOException {
+    public void deserialize(HttpRecord record, Collector<CdcSourceRecord> out) throws IOException {
         List<PrometheusHttpRecord> records = HttpUtils.parse(record);
         for (PrometheusHttpRecord prometheusHttpRecord : records) {
-            out.collect(objectMapper.writeValueAsString(prometheusHttpRecord));
+            out.collect(new CdcSourceRecord(prometheusHttpRecord));
         }
     }
 
     @Override
-    public TypeInformation<String> getProducedType() {
-        return TypeInformation.of(String.class);
+    public TypeInformation<CdcSourceRecord> getProducedType() {
+        return getForClass(CdcSourceRecord.class);
     }
 }

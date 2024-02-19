@@ -18,11 +18,12 @@
 
 package org.apache.paimon.flink.action.cdc.http;
 
+import org.apache.paimon.flink.action.cdc.CdcPrometheusDeserializationSchema;
+import org.apache.paimon.flink.action.cdc.CdcSourceRecord;
 import org.apache.paimon.flink.action.cdc.ComputedColumn;
 import org.apache.paimon.flink.action.cdc.http.source.HttpSource;
 import org.apache.paimon.flink.action.cdc.http.source.HttpSourceConfig;
 import org.apache.paimon.flink.action.cdc.http.source.HttpSourceOptions;
-import org.apache.paimon.flink.action.cdc.http.source.reader.deserializer.PrometheusStringDeserializationSchema;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DataTypes;
 
@@ -38,7 +39,7 @@ import static org.apache.paimon.flink.action.cdc.http.source.util.HttpUtils.COMM
 /** Utils for Http Action. */
 public class HttpActionUtils {
 
-    public static HttpSource<String> buildPrometheusHttpSource(Configuration httpConfig) {
+    public static HttpSource<CdcSourceRecord> buildPrometheusHttpSource(Configuration httpConfig) {
         HttpSourceConfig.Builder sourceBuilder = HttpSourceConfig.builder();
 
         sourceBuilder.httpUrls(
@@ -58,7 +59,7 @@ public class HttpActionUtils {
                 .getOptional(HttpSourceOptions.HTTP_EXECUTE_INTERVAL_SECONDS)
                 .ifPresent(sourceBuilder::httpExecuteIntervalSeconds);
 
-        return new HttpSource<>(sourceBuilder.build(), new PrometheusStringDeserializationSchema());
+        return new HttpSource<>(sourceBuilder.build(), new CdcPrometheusDeserializationSchema());
     }
 
     public static LinkedHashMap<String, DataType> commonDataTypes(
