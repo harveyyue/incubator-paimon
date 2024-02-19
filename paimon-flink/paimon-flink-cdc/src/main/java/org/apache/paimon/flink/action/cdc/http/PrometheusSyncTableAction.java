@@ -19,6 +19,7 @@
 package org.apache.paimon.flink.action.cdc.http;
 
 import org.apache.paimon.flink.action.cdc.CdcActionCommonUtils;
+import org.apache.paimon.flink.action.cdc.CdcSourceRecord;
 import org.apache.paimon.flink.action.cdc.SyncJobHandler;
 import org.apache.paimon.flink.action.cdc.SyncTableActionBase;
 import org.apache.paimon.flink.sink.cdc.RichCdcMultiplexRecord;
@@ -70,7 +71,7 @@ public class PrometheusSyncTableAction extends SyncTableActionBase {
     }
 
     @Override
-    protected FlatMapFunction<String, RichCdcMultiplexRecord> recordParse() {
+    protected FlatMapFunction<CdcSourceRecord, RichCdcMultiplexRecord> recordParse() {
         return new PrometheusRecordParser(database, table, caseSensitive, computedColumns);
     }
 

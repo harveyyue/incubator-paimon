@@ -18,6 +18,7 @@
 
 package org.apache.paimon.flink.action.cdc.http;
 
+import org.apache.paimon.flink.action.cdc.CdcSourceRecord;
 import org.apache.paimon.flink.action.cdc.ComputedColumn;
 import org.apache.paimon.flink.action.cdc.http.source.reader.deserializer.PrometheusHttpRecord;
 import org.apache.paimon.flink.sink.cdc.CdcRecord;
@@ -25,9 +26,6 @@ import org.apache.paimon.flink.sink.cdc.RichCdcMultiplexRecord;
 import org.apache.paimon.types.DataType;
 import org.apache.paimon.types.DataTypes;
 import org.apache.paimon.types.RowKind;
-
-import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.DeserializationFeature;
-import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
 
 import org.apache.flink.api.common.functions.FlatMapFunction;
 import org.apache.flink.util.Collector;
@@ -53,11 +51,10 @@ import static org.apache.paimon.flink.action.cdc.http.HttpActionUtils.keyCaseCon
  * A parser for Prometheus http strings, converting them into a list of {@link
  * RichCdcMultiplexRecord}s.
  */
-public class PrometheusRecordParser implements FlatMapFunction<String, RichCdcMultiplexRecord> {
+public class PrometheusRecordParser
+        implements FlatMapFunction<CdcSourceRecord, RichCdcMultiplexRecord> {
 
     private static final Logger LOG = LoggerFactory.getLogger(PrometheusRecordParser.class);
-
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final String databaseName;
     private final String tableName;
@@ -74,15 +71,12 @@ public class PrometheusRecordParser implements FlatMapFunction<String, RichCdcMu
         this.tableName = tableName;
         this.caseSensitive = false;
         this.computedColumns = computedColumns;
-        objectMapper
-                .configure(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS, true)
-                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
     }
 
     @Override
-    public void flatMap(String value, Collector<RichCdcMultiplexRecord> out) throws Exception {
-        PrometheusHttpRecord prometheusHttpRecord =
-                objectMapper.readValue(value, PrometheusHttpRecord.class);
+    public void flatMap(CdcSourceRecord value, Collector<RichCdcMultiplexRecord> out)
+            throws Exception {
+        PrometheusHttpRecord prometheusHttpRecord = (PrometheusHttpRecord) value.getValue();
         List<String> labelKeys = prometheusHttpRecord.labelKeys();
         LinkedHashMap<String, DataType> dataTypes = schemaCache.get(labelKeys);
         if (dataTypes == null) {
