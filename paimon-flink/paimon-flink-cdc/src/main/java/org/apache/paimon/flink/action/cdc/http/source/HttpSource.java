@@ -80,7 +80,7 @@ public class HttpSource<OUT>
 
         return new HttpSourceReader<>(
                 elementsQueue,
-                new SingleThreadFetcherManager(elementsQueue, splitReaderSupplier, config),
+                new SingleThreadFetcherManager(elementsQueue, splitReaderSupplier),
                 recordEmitter,
                 config,
                 readerContext);
