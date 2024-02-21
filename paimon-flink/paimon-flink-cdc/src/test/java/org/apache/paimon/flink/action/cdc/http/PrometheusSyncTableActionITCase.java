@@ -82,6 +82,20 @@ public class PrometheusSyncTableActionITCase extends CdcActionITCaseBase {
                                 "^debezium_metrics_queueremainingcapacity\\{context=\"streaming\".*|^debezium_metrics_millisecondsbehindsource\\{context=\"streaming\".*")
                         .build();
 
+        run(httpSourceConfig);
+    }
+
+    @Test
+    public void testPrometheusHttpSourceWithoutIncludeMetricsRegex() throws Exception {
+        Set<String> urls = new HashSet<>();
+        urls.add("http://10.59.54.214:7072/metrics");
+        HttpSourceConfig httpSourceConfig =
+                HttpSourceConfig.builder().httpUrls(urls).httpExecuteMode("prometheus").build();
+
+        run(httpSourceConfig);
+    }
+
+    private void run(HttpSourceConfig httpSourceConfig) throws Exception {
         HttpSource<PrometheusHttpRecord> httpSource =
                 new HttpSource<>(httpSourceConfig, new PrometheusHttpRecordDeserializationSchema());
 

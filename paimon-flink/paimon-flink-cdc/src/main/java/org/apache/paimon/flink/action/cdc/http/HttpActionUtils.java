@@ -62,7 +62,7 @@ public class HttpActionUtils {
     }
 
     public static LinkedHashMap<String, DataType> commonDataTypes(
-            List<ComputedColumn> computedColumns) {
+            List<ComputedColumn> computedColumns, boolean caseSensitive) {
         LinkedHashMap<String, DataType> dataTypes = new LinkedHashMap<>();
         dataTypes.put("http_url", DataTypes.STRING());
         dataTypes.put("timestamp", DataTypes.BIGINT());
@@ -70,7 +70,16 @@ public class HttpActionUtils {
         dataTypes.put("value", DataTypes.STRING());
         computedColumns.forEach(
                 computedColumn ->
-                        dataTypes.put(computedColumn.columnName(), computedColumn.columnType()));
+                        dataTypes.put(
+                                keyCaseConvert(computedColumn.columnName(), caseSensitive),
+                                computedColumn.columnType()));
         return dataTypes;
+    }
+
+    public static String keyCaseConvert(String key, boolean caseSensitive) {
+        if (key == null) {
+            return null;
+        }
+        return caseSensitive ? key : key.toLowerCase();
     }
 }

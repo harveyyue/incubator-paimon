@@ -39,7 +39,7 @@ public class HttpUtils {
     private static final Logger LOG = LoggerFactory.getLogger(HttpUtils.class);
 
     public static final Pattern PROMETHEUS_FORMAT_PATTERN =
-            Pattern.compile("(.*)\\{(.*)}\\s+([0-9-.EeNa]+)");
+            Pattern.compile("(.*)\\{(.*)}\\s+([0-9-.EeNa]+)|(.*)\\s+([0-9-.EeNa]+)");
     public static final Pattern PROMETHEUS_COMMENT_PATTERN = Pattern.compile("^#.*");
     public static final Pattern BREAKLINE_PATTERN = Pattern.compile("\\n");
     public static final Pattern COMMA_PATTERN = Pattern.compile(",");
@@ -52,7 +52,10 @@ public class HttpUtils {
                             PrometheusHttpRecord result = null;
                             Matcher matcher = PROMETHEUS_FORMAT_PATTERN.matcher(line);
                             if (matcher.matches()) {
-                                String metricName = matcher.group(1);
+                                String metricName =
+                                        matcher.group(1) == null
+                                                ? matcher.group(4)
+                                                : matcher.group(1);
                                 String label = matcher.group(2);
                                 Map<String, String> labels = new HashMap<>();
                                 if (label != null) {
@@ -68,7 +71,10 @@ public class HttpUtils {
                                                         }
                                                     });
                                 }
-                                String value = matcher.group(3);
+                                String value =
+                                        matcher.group(3) == null
+                                                ? matcher.group(5)
+                                                : matcher.group(3);
                                 result =
                                         new PrometheusHttpRecord(
                                                 record.getHttpUrl(),

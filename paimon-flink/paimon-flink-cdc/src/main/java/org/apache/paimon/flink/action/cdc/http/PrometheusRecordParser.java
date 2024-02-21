@@ -36,6 +36,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -44,7 +45,9 @@ import java.util.function.Function;
 
 import static org.apache.paimon.flink.action.cdc.CdcActionCommonUtils.columnCaseConvertAndDuplicateCheck;
 import static org.apache.paimon.flink.action.cdc.CdcActionCommonUtils.columnDuplicateErrMsg;
+import static org.apache.paimon.flink.action.cdc.CdcActionCommonUtils.mapKeyCaseConvert;
 import static org.apache.paimon.flink.action.cdc.http.HttpActionUtils.commonDataTypes;
+import static org.apache.paimon.flink.action.cdc.http.HttpActionUtils.keyCaseConvert;
 
 /**
  * A parser for Prometheus http strings, converting them into a list of {@link
@@ -69,7 +72,7 @@ public class PrometheusRecordParser implements FlatMapFunction<String, RichCdcMu
             List<ComputedColumn> computedColumns) {
         this.databaseName = databaseName;
         this.tableName = tableName;
-        this.caseSensitive = caseSensitive;
+        this.caseSensitive = false;
         this.computedColumns = computedColumns;
         objectMapper
                 .configure(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS, true)
@@ -111,20 +114,24 @@ public class PrometheusRecordParser implements FlatMapFunction<String, RichCdcMu
         data.put("timestamp", String.valueOf(prometheusHttpRecord.getTimestamp()));
         data.put("metric_name", prometheusHttpRecord.getMetricName());
         data.put("value", prometheusHttpRecord.getValue());
-        data.putAll(prometheusHttpRecord.getLabels());
+        data.putAll(
+                mapKeyCaseConvert(
+                        prometheusHttpRecord.getLabels(),
+                        caseSensitive,
+                        columnDuplicateErrMsg(tableName)));
         // generate values of computed columns
         computedColumns.forEach(
                 computedColumn ->
                         data.put(
-                                computedColumn.columnName(),
+                                keyCaseConvert(computedColumn.columnName(), caseSensitive),
                                 computedColumn.eval(data.get(computedColumn.fieldReference()))));
         return data;
     }
 
     public LinkedHashMap<String, DataType> extractDataTypes(
             PrometheusHttpRecord prometheusHttpRecord) {
-        LinkedHashMap<String, DataType> dataTypes = commonDataTypes(computedColumns);
-        Set<String> existedFields = dataTypes.keySet();
+        LinkedHashMap<String, DataType> dataTypes = commonDataTypes(computedColumns, caseSensitive);
+        Set<String> existedFields = new HashSet<>(dataTypes.keySet());
         Function<String, String> columnDuplicateErrMsg = columnDuplicateErrMsg(tableName);
         prometheusHttpRecord
                 .labelKeys()
