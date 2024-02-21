@@ -65,7 +65,7 @@ public class PrometheusSyncTableAction extends SyncTableActionBase {
     @Override
     protected Schema retrieveSchema() throws Exception {
         Schema.Builder builder = Schema.newBuilder();
-        commonDataTypes(computedColumns).forEach(builder::column);
+        commonDataTypes(computedColumns, caseSensitive).forEach(builder::column);
         return builder.build();
     }
 
