@@ -303,6 +303,7 @@ under the License.
                                 <includes>
                                     <include>com.squareup.okhttp3:*</include>
                                     <include>com.squareup.okio:*</include>
+                                    <include>org.apache.avro:avro</include>
                                 </includes>
                             </artifactSet>
                             <relocations>
@@ -319,6 +320,10 @@ under the License.
                                 <relocation>
                                     <pattern>okio</pattern>
                                     <shadedPattern>org.apache.paimon.shade.okio</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>org.apache.avro</pattern>
+                                    <shadedPattern>org.apache.paimon.shade.org.apache.avro</shadedPattern>
                                 </relocation>
                             </relocations>
                         </configuration>
