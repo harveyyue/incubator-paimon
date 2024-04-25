@@ -35,6 +35,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -129,11 +130,11 @@ public class DebeziumAvroRecordParser extends DebeziumRecordParser {
             resultMap.put(
                     fieldName,
                     DebeziumSchemaUtils.transformRawValue(
-                            DataFormat.DEBEZIUM_AVRO,
                             payload.get(fieldName),
                             typeName.toLowerCase(),
                             className,
                             typeMapping,
+                            ZoneOffset.UTC,
                             parameters));
 
             if (paimonFieldTypes == null) {

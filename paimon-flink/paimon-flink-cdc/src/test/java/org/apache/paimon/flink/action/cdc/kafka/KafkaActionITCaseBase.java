@@ -62,6 +62,8 @@ import org.testcontainers.containers.Network;
 import org.testcontainers.containers.output.Slf4jLogConsumer;
 import org.testcontainers.utility.DockerImageName;
 
+import java.io.File;
+import java.io.IOException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -81,6 +83,7 @@ import java.util.stream.Collectors;
 
 import static io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig.AUTO_REGISTER_SCHEMAS;
 import static io.confluent.kafka.serializers.AbstractKafkaSchemaSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG;
+import static org.assertj.core.api.Assertions.assertThat;
 
 /** Base test class for Kafka synchronization. */
 public abstract class KafkaActionITCaseBase extends CdcActionITCaseBase {
@@ -343,6 +346,14 @@ public abstract class KafkaActionITCaseBase extends CdcActionITCaseBase {
                             topic, numPartitions, replicationFactor),
                     e);
         }
+    }
+
+    public static List<String> readLines(String resource) throws IOException {
+        final URL url =
+                KafkaCanalSyncTableActionITCase.class.getClassLoader().getResource(resource);
+        assertThat(url).isNotNull();
+        java.nio.file.Path path = new File(url.getFile()).toPath();
+        return Files.readAllLines(path);
     }
 
     protected void writeRecordsToKafka(String topic, String resourceDirFormat, Object... args)

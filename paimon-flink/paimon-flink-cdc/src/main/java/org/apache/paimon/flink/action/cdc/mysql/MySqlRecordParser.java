@@ -31,6 +31,7 @@ import org.apache.paimon.types.RowKind;
 import org.apache.paimon.utils.JsonSerdeUtil;
 import org.apache.paimon.utils.Preconditions;
 
+import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.core.type.TypeReference;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.DeserializationFeature;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.JsonNode;
 import org.apache.paimon.shade.jackson2.com.fasterxml.jackson.databind.ObjectMapper;
@@ -64,7 +65,6 @@ import static org.apache.paimon.flink.action.cdc.CdcActionCommonUtils.listCaseCo
 import static org.apache.paimon.flink.action.cdc.CdcActionCommonUtils.mapKeyCaseConvert;
 import static org.apache.paimon.flink.action.cdc.CdcActionCommonUtils.recordKeyDuplicateErrMsg;
 import static org.apache.paimon.flink.action.cdc.TypeMapping.TypeMappingMode.TO_NULLABLE;
-import static org.apache.paimon.utils.JsonSerdeUtil.isNull;
 
 /**
  * A parser for MySql Debezium JSON strings, converting them into a list of {@link
@@ -230,27 +230,29 @@ public class MySqlRecordParser implements FlatMapFunction<CdcSourceRecord, RichC
                                 + "Please make sure that `includeSchema` is true "
                                 + "in the JsonDebeziumDeserializationSchema you created");
 
+        Map<String, Object> recordMap =
+                JsonSerdeUtil.convertValue(recordRow, new TypeReference<Map<String, Object>>() {});
         Map<String, DebeziumEvent.Field> fields = schema.beforeAndAfterFields();
 
         LinkedHashMap<String, String> resultMap = new LinkedHashMap<>();
         for (Map.Entry<String, DebeziumEvent.Field> field : fields.entrySet()) {
             String fieldName = field.getKey();
             String mySqlType = field.getValue().type();
-            JsonNode objectValue = recordRow.get(fieldName);
-            if (isNull(objectValue)) {
-                continue;
-            }
+            Object objectValue = recordMap.get(fieldName);
+            Map<String, String> parameters =
+                    JsonSerdeUtil.convertValue(
+                            field.getValue().parameters(),
+                            new TypeReference<Map<String, String>>() {});
 
             String className = field.getValue().name();
-            String oldValue = objectValue.asText();
             String newValue =
                     DebeziumSchemaUtils.transformRawValue(
-                            oldValue,
+                            objectValue,
                             mySqlType,
                             className,
                             typeMapping,
-                            objectValue,
-                            serverTimeZone);
+                            serverTimeZone,
+                            parameters);
             resultMap.put(fieldName, newValue);
         }
 

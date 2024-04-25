@@ -74,7 +74,6 @@ public class DebeziumSchemaUtils {
 
     /** Transform raw string value according to schema. */
     public static String transformRawValue(
-            DataFormat dataFormat,
             @Nullable Object rawValue,
             String debeziumType,
             @Nullable String className,
@@ -90,7 +89,7 @@ public class DebeziumSchemaUtils {
         if (Bits.LOGICAL_NAME.equals(className)) {
             // transform little-endian form to normal order
             // https://debezium.io/documentation/reference/stable/connectors/mysql.html#mysql-data-types
-            byte[] littleEndian = getBytes(rawValue, dataFormat);
+            byte[] littleEndian = getBytes(rawValue);
             byte[] bigEndian = new byte[littleEndian.length];
             for (int i = 0; i < littleEndian.length; i++) {
                 bigEndian[i] = littleEndian[littleEndian.length - 1 - i];
@@ -102,16 +101,22 @@ public class DebeziumSchemaUtils {
             }
         } else if (("bytes".equals(debeziumType) && className == null)) {
             // MySQL binary, varbinary, blob
-            transformed = new String(getBytes(rawValue, dataFormat));
+            transformed = new String(getBytes(rawValue));
         } else if ("bytes".equals(debeziumType) && decimalLogicalName().equals(className)) {
             // MySQL numeric, fixed, decimal
             try {
-                byte[] bytes = getBytes(rawValue, dataFormat);
-                transformed =
-                        new BigDecimal(
-                                        new BigInteger(bytes),
-                                        Integer.parseInt(parameters.get(CONNECT_SCALE)))
-                                .toPlainString();
+                if (rawValue instanceof BigDecimal
+                        || rawValue instanceof Integer
+                        || rawValue instanceof Long) {
+                    transformed = new BigDecimal(rawValue.toString()).toPlainString();
+                } else {
+                    byte[] bytes = getBytes(rawValue);
+                    transformed =
+                            new BigDecimal(
+                                            new BigInteger(bytes),
+                                            Integer.parseInt(parameters.get(CONNECT_SCALE)))
+                                    .toPlainString();
+                }
             } catch (Exception e) {
                 throw new RuntimeException(
                         "Invalid big decimal value "
@@ -182,7 +187,7 @@ public class DebeziumSchemaUtils {
             ByteBuffer wkb;
             int srid;
 
-            if (dataFormat.equals(DataFormat.DEBEZIUM_AVRO)) {
+            if (rawValue instanceof GenericRecord) {
                 GenericRecord record = (GenericRecord) rawValue;
                 wkb = (ByteBuffer) record.get(Geometry.WKB_FIELD);
                 srid =
@@ -209,10 +214,11 @@ public class DebeziumSchemaUtils {
         return transformed;
     }
 
-    private static byte[] getBytes(Object rawValue, DataFormat dataFormat) {
-        return dataFormat.equals(DataFormat.DEBEZIUM_AVRO)
-                ? ((ByteBuffer) rawValue).array()
-                : Base64.getDecoder().decode(rawValue.toString());
+    private static byte[] getBytes(Object rawValue) {
+        if (rawValue instanceof ByteBuffer) {
+            return ((ByteBuffer) rawValue).array();
+        }
+        return Base64.getDecoder().decode(rawValue.toString());
     }
 
     private static String convertWkbArray(ByteBuffer wkb, int srid) {

@@ -21,7 +21,6 @@ package org.apache.paimon.flink.action.cdc.format.debezium;
 import org.apache.paimon.flink.action.cdc.CdcSourceRecord;
 import org.apache.paimon.flink.action.cdc.ComputedColumn;
 import org.apache.paimon.flink.action.cdc.TypeMapping;
-import org.apache.paimon.flink.action.cdc.format.DataFormat;
 import org.apache.paimon.flink.action.cdc.format.RecordParser;
 import org.apache.paimon.flink.sink.cdc.RichCdcMultiplexRecord;
 import org.apache.paimon.types.DataType;
@@ -225,7 +224,6 @@ public class DebeziumRecordParser extends RecordParser {
 
             String transformed =
                     DebeziumSchemaUtils.transformRawValue(
-                            DataFormat.DEBEZIUM_JSON,
                             rawValue,
                             debeziumType,
                             className,
